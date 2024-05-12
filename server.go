@@ -1,7 +1,9 @@
 package goredis
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"sync"
@@ -109,7 +111,13 @@ func (server *server) handleConn(clientId int64, conn net.Conn) {
 		buff := make([]byte, 4096)
 		n, err := conn.Read(buff)
 		if err != nil {
-			// TODO : handle the error
+			if !errors.Is(err, io.EOF) {
+				server.logger.Error(
+					"error reading from client",
+					slog.Int64("clientId", clientId),
+					slog.String("err", err.Error()),
+				)
+			}
 			break
 		}
 
@@ -119,7 +127,11 @@ func (server *server) handleConn(clientId int64, conn net.Conn) {
 		}
 
 		if _, err := conn.Write(buff[:n]); err != nil {
-			// TODO: handle the errror
+			server.logger.Error(
+				"error writing to client",
+				slog.Int64("clientId", clientId),
+				slog.String("err", err.Error()),
+			)
 			break
 		}
 	}
@@ -130,6 +142,7 @@ func (server *server) handleConn(clientId int64, conn net.Conn) {
 		return
 	}
 
+	server.logger.Info("client disconnecting", slog.Int64("clientId", clientId))
 	if err := conn.Close(); err != nil {
 		server.logger.Error(
 			"cannot close client",
