@@ -149,6 +149,7 @@ func (server *server) handleConn(clientId int64, conn net.Conn) {
 			err = server.handleSetMethod(clientId, conn, request)
 		default:
 			server.logger.Error("unknown command", slog.String("command", commandName), slog.Int64("clientId", clientId))
+			_, err = conn.Write([]byte("-ERR unknown command\r\n"))
 			break
 		}
 
