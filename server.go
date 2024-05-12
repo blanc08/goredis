@@ -79,6 +79,7 @@ func (server *server) Stop() error {
 	if server.shuttingDown {
 		return fmt.Errorf("already shutting down")
 	}
+	server.shuttingDown = true
 
 	for clientId, conn := range server.clients {
 		server.logger.Info(
