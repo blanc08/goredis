@@ -139,15 +139,15 @@ func (server *server) handleConn(clientId int64, conn net.Conn) {
 
 		switch strings.ToUpper(commandName) {
 		case "GET":
-			server.logger.Debug("GET command received", slog.Int64("clientId", clientId))
+			err = server.handleGetCommand(clientId, conn, request)
 		case "SET":
-			server.logger.Debug("SET command received", slog.Int64("clientId", clientId))
+			err = server.handleSetMethod(clientId, conn, request)
 		default:
 			server.logger.Error("unknown command", slog.String("command", commandName), slog.Int64("clientId", clientId))
 			break
 		}
 
-		if _, err := conn.Write([]byte("+OK\r\n")); err != nil {
+		if err != nil {
 			server.logger.Error(
 				"error writing to client",
 				slog.Int64("clientId", clientId),
@@ -173,5 +173,62 @@ func (server *server) handleConn(clientId int64, conn net.Conn) {
 			slog.String("error", err.Error()),
 		)
 	}
+
+}
+
+func (server *server) handleGetCommand(clientId int64, conn net.Conn, command []any) error {
+	if len(command) < 2 {
+		_, err := conn.Write([]byte("--ERR missing key\r\n"))
+		return err
+	}
+
+	key, ok := command[1].(string)
+	if !ok {
+		_, err := conn.Write([]byte("--ERR invalid key\r\n"))
+		return err
+	}
+
+	server.logger.Debug(
+		"GET command",
+		slog.String("key", key),
+		slog.Int64("clientId", clientId),
+	)
+
+	// TODO : Get the key here
+
+	_, err := conn.Write([]byte("_\r\n"))
+	return err
+}
+
+func (server *server) handleSetMethod(clientId int64, conn net.Conn, command []any) error {
+
+	if len(command) < 3 {
+		_, err := conn.Write([]byte("-ERR misisng key and value\r\n"))
+		return err
+	}
+
+	key, ok := command[1].(string)
+	if !ok {
+		_, err := conn.Write([]byte("-ERR invalid key\r\n"))
+		return err
+	}
+
+	value, ok := command[2].(string)
+	if !ok {
+		_, err := conn.Write([]byte("-ERR invalid value\r\n"))
+		return err
+	}
+
+	server.logger.Debug(
+		"SET key into value",
+		slog.String("key", key),
+		slog.String("value", value),
+		slog.Int64("clientId", clientId),
+	)
+
+	// TODO: SET the key here
+
+	_, err := conn.Write([]byte("+OK\r\n"))
+	return err
 
 }

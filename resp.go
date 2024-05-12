@@ -61,8 +61,6 @@ func readArray(r io.Reader, readFirstChar bool) ([]any, error) {
 			return nil, err
 		}
 
-		fmt.Println("b: ", b)
-
 		if b != '*' {
 			return nil, fmt.Errorf("expected * character for array, but found %c", b)
 		}
