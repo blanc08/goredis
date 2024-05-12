@@ -43,7 +43,7 @@ func NewServer(listener net.Listener, logger *slog.Logger) *server {
 func (server *server) Start() error {
 
 	if !server.started.CompareAndSwap(false, true) {
-		return fmt.Errorf("server already started")
+		return fmt.Errorf("ser	ver already started")
 	}
 
 	server.logger.Info("server started")
@@ -75,6 +75,10 @@ func (server *server) Start() error {
 func (server *server) Stop() error {
 	server.clientsLock.Lock()
 	defer server.clientsLock.Unlock()
+
+	if !server.started.Load() {
+		return fmt.Errorf("server not started yet")
+	}
 
 	if server.shuttingDown {
 		return fmt.Errorf("already shutting down")
