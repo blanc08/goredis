@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -108,8 +109,7 @@ func (server *server) handleConn(clientId int64, conn net.Conn) {
 	)
 
 	for {
-		buff := make([]byte, 4096)
-		n, err := conn.Read(buff)
+		request, err := readArray(conn, true)
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
 				server.logger.Error(
@@ -121,12 +121,33 @@ func (server *server) handleConn(clientId int64, conn net.Conn) {
 			break
 		}
 
-		if n == 0 {
-			// TODO: this means the client is closing the connection
+		server.logger.Debug(
+			"request received",
+			slog.Any("request", request),
+			slog.Int64("clientId", clientId),
+		)
+
+		if len(request) == 0 {
+			server.logger.Error("missing command in the request", slog.Int64("clientId", clientId))
+		}
+
+		commandName, ok := request[0].(string)
+		if !ok {
+			server.logger.Error("invalid command name", slog.Int64("clientId", clientId))
 			break
 		}
 
-		if _, err := conn.Write(buff[:n]); err != nil {
+		switch strings.ToUpper(commandName) {
+		case "GET":
+			server.logger.Debug("GET command received", slog.Int64("clientId", clientId))
+		case "SET":
+			server.logger.Debug("SET command received", slog.Int64("clientId", clientId))
+		default:
+			server.logger.Error("unknown command", slog.String("command", commandName), slog.Int64("clientId", clientId))
+			break
+		}
+
+		if _, err := conn.Write([]byte("+OK\r\n")); err != nil {
 			server.logger.Error(
 				"error writing to client",
 				slog.Int64("clientId", clientId),
@@ -141,6 +162,8 @@ func (server *server) handleConn(clientId int64, conn net.Conn) {
 		server.clientsLock.Unlock()
 		return
 	}
+	delete(server.clients, clientId)
+	server.clientsLock.Unlock()
 
 	server.logger.Info("client disconnecting", slog.Int64("clientId", clientId))
 	if err := conn.Close(); err != nil {
