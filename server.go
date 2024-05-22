@@ -1,6 +1,7 @@
 package goredis
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -118,8 +119,10 @@ func (server *server) handleConn(clientId int64, conn net.Conn) {
 		slog.String("host", conn.RemoteAddr().String()),
 	)
 
+	reader := bufio.NewReader(conn)
+
 	for {
-		request, err := readArray(conn, true)
+		request, err := readArray(reader, true)
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
 				server.logger.Error(
