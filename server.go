@@ -120,6 +120,7 @@ func (server *server) handleConn(clientId int64, conn net.Conn) {
 	)
 
 	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
 
 	for {
 		request, err := readArray(reader, true)
@@ -152,12 +153,12 @@ func (server *server) handleConn(clientId int64, conn net.Conn) {
 
 		switch strings.ToUpper(commandName) {
 		case "GET":
-			err = server.handleGetCommand(clientId, conn, request)
+			err = server.handleGetCommand(clientId, writer, request)
 		case "SET":
-			err = server.handleSetMethod(clientId, conn, request)
+			err = server.handleSetMethod(clientId, writer, request)
 		default:
 			server.logger.Error("unknown command", slog.String("command", commandName), slog.Int64("clientId", clientId))
-			_, err = conn.Write([]byte("-ERR unknown command\r\n"))
+			_, err = writer.Write([]byte("-ERR unknown command\r\n"))
 			break
 		}
 
@@ -190,7 +191,7 @@ func (server *server) handleConn(clientId int64, conn net.Conn) {
 
 }
 
-func (server *server) handleGetCommand(clientId int64, conn net.Conn, command []any) error {
+func (server *server) handleGetCommand(clientId int64, conn io.Writer, command []any) error {
 	if len(command) < 2 {
 		_, err := conn.Write([]byte("--ERR missing key\r\n"))
 		return err
@@ -223,7 +224,7 @@ func (server *server) handleGetCommand(clientId int64, conn net.Conn, command []
 	return err
 }
 
-func (server *server) handleSetMethod(clientId int64, conn net.Conn, command []any) error {
+func (server *server) handleSetMethod(clientId int64, conn io.Writer, command []any) error {
 
 	if len(command) < 3 {
 		_, err := conn.Write([]byte("-ERR misisng key and value\r\n"))
