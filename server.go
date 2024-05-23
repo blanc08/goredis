@@ -120,7 +120,17 @@ func (server *server) handleConn(clientId int64, conn net.Conn) {
 	)
 
 	reader := bufio.NewReader(conn)
-	writer := bufio.NewWriter(conn)
+	writer := newBufferWriter(conn)
+	go func() {
+		// TODO: handle shutdown for the buffered writer.
+		if err := writer.Start(); err != nil {
+			server.logger.Error(
+				"buffered writer error",
+				slog.Int64("id", clientId),
+				slog.String("err", err.Error()),
+			)
+		}
+	}()
 
 	for {
 		request, err := readArray(reader, true)
