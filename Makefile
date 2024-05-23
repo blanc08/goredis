@@ -12,7 +12,7 @@ coverage:
 	go tool cover -html cover.out
 
 benchmark:
-	go test . -v -bench=BenchmarkRedisSet -benchmem -benchtime=10s -memprofile=mem.out -cpuprofile=cpu.out -run="^$$"
+	go test . -v -bench=BenchmarkRedisSet -benchmem -benchtime=20000000x -memprofile=mem.out -cpuprofile=cpu.out -run="^$$"
 
 phony:
 	test, coverage, benchmark

@@ -1,16 +1,18 @@
 package goredis
 
 import (
-	"bufio"
-	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log/slog"
 	"net"
-	"strings"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 )
+
+// N Shards value
+const nShards = 1000
 
 type server struct {
 	listener net.Listener
@@ -21,11 +23,13 @@ type server struct {
 	lastClientId int64
 	clientsLock  sync.Mutex
 	shuttingDown bool
-	database     sync.Map
+
+	dbLock   [nShards]sync.RWMutex
+	database [nShards]map[string]string
 }
 
 func NewServer(listener net.Listener, logger *slog.Logger) *server {
-	return &server{
+	server := &server{
 		listener: listener,
 		logger:   logger,
 
@@ -35,8 +39,15 @@ func NewServer(listener net.Listener, logger *slog.Logger) *server {
 		clientsLock:  sync.Mutex{},
 		shuttingDown: false,
 
-		database: sync.Map{},
+		dbLock:   [nShards]sync.RWMutex{},
+		database: [nShards]map[string]string{},
 	}
+
+	for i := 0; i < nShards; i++ {
+		server.database[i] = make(map[string]string)
+	}
+
+	return server
 }
 
 func (server *server) Start() error {
@@ -110,6 +121,18 @@ func (server *server) Stop() error {
 	return nil
 }
 
+func unsafeToUpper(s string) {
+	bytes := unsafe.Slice(unsafe.StringData(s), len(s))
+
+	for i := 0; i < len(bytes); i++ {
+		b := bytes[i]
+		if b >= 'a' && b <= 'z' {
+			b = b + 'A' - 'a'
+			bytes[i] = b
+		}
+	}
+}
+
 func (server *server) handleConn(clientId int64, conn net.Conn) {
 	slog.Info(
 		"client connected",
@@ -117,7 +140,7 @@ func (server *server) handleConn(clientId int64, conn net.Conn) {
 		slog.String("host", conn.RemoteAddr().String()),
 	)
 
-	reader := bufio.NewReader(conn)
+	reader := newMessageReader(conn)
 	writer := newBufferWriter(conn)
 	go func() {
 		// TODO: handle shutdown for the buffered writer.
@@ -131,43 +154,36 @@ func (server *server) handleConn(clientId int64, conn net.Conn) {
 	}()
 
 	for {
-		request, err := readArray(reader, true)
+		length, err := reader.ReadArrayLength()
 		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				server.logger.Error(
-					"error reading from client",
-					slog.Int64("clientId", clientId),
-					slog.String("err", err.Error()),
-				)
-			}
 			break
 		}
 
-		server.logger.Debug(
-			"request received",
-			slog.Any("request", request),
-			slog.Int64("clientId", clientId),
-		)
-
-		if len(request) == 0 {
-			server.logger.Error("missing command in the request", slog.Int64("clientId", clientId))
-		}
-
-		commandName, ok := request[0].(string)
-		if !ok {
-			server.logger.Error("invalid command name", slog.Int64("clientId", clientId))
+		if length < 1 {
 			break
 		}
 
-		switch strings.ToUpper(commandName) {
+		commandName, err := reader.ReadString()
+		if err != nil {
+			break
+		}
+
+		unsafeToUpper(commandName)
+
+		switch commandName {
 		case "GET":
-			err = server.handleGetCommand(clientId, writer, request)
+			err = server.handleGetCommand(reader, writer)
 		case "SET":
-			err = server.handleSetMethod(clientId, writer, request)
+			err = server.handleSetMethod(reader, writer)
 		default:
 			server.logger.Error("unknown command", slog.String("command", commandName), slog.Int64("clientId", clientId))
 			_, err = writer.Write([]byte("-ERR unknown command\r\n"))
-			break
+
+			for i := 1; i < length; i++ {
+				if _, err = reader.ReadString(); err != nil {
+					break
+				}
+			}
 		}
 
 		if err != nil {
@@ -199,29 +215,18 @@ func (server *server) handleConn(clientId int64, conn net.Conn) {
 
 }
 
-func (server *server) handleGetCommand(clientId int64, conn io.Writer, command []any) error {
-	if len(command) < 2 {
-		_, err := conn.Write([]byte("--ERR missing key\r\n"))
+func (server *server) handleGetCommand(reader *messageReader, conn io.Writer) error {
+	key, err := reader.ReadString()
+	if err != nil {
 		return err
 	}
 
-	key, ok := command[1].(string)
-	if !ok {
-		_, err := conn.Write([]byte("--ERR invalid key\r\n"))
-		return err
-	}
+	shard := calculateShard(key)
+	server.dbLock[shard].RLock()
+	value, ok := server.database[shard][key]
+	server.dbLock[shard].RUnlock()
 
-	server.logger.Debug(
-		"GET command",
-		slog.String("key", key),
-		slog.Int64("clientId", clientId),
-	)
-
-	valueObj, ok := server.database.Load(key)
-
-	var err error
 	if ok {
-		value := valueObj.(string)
 		resp := fmt.Sprintf("$%d\r\n%s\r\n", len(value), value)
 		_, err = conn.Write([]byte(resp))
 	} else {
@@ -231,35 +236,30 @@ func (server *server) handleGetCommand(clientId int64, conn io.Writer, command [
 	return err
 }
 
-func (server *server) handleSetMethod(clientId int64, conn io.Writer, command []any) error {
+func calculateShard(s string) int {
+	hasher := fnv.New64()
+	_, _ = hasher.Write([]byte(s))
+	hash := hasher.Sum64()
+	return int(hash % uint64(nShards))
+}
 
-	if len(command) < 3 {
-		_, err := conn.Write([]byte("-ERR misisng key and value\r\n"))
+func (server *server) handleSetMethod(reader *messageReader, conn io.Writer) error {
+	key, err := reader.ReadString()
+	if err != nil {
 		return err
 	}
 
-	key, ok := command[1].(string)
-	if !ok {
-		_, err := conn.Write([]byte("-ERR invalid key\r\n"))
+	value, err := reader.ReadString()
+	if err != nil {
 		return err
 	}
 
-	value, ok := command[2].(string)
-	if !ok {
-		_, err := conn.Write([]byte("-ERR invalid value\r\n"))
-		return err
-	}
+	shard := calculateShard(key)
+	server.dbLock[shard].Lock()
+	server.database[shard][key] = value
+	server.dbLock[shard].Unlock()
 
-	server.logger.Debug(
-		"SET key into value",
-		slog.String("key", key),
-		slog.String("value", value),
-		slog.Int64("clientId", clientId),
-	)
-
-	server.database.Store(key, value)
-
-	_, err := conn.Write([]byte("+OK\r\n"))
+	_, err = conn.Write([]byte("+OK\r\n"))
 	return err
 
 }
