@@ -1,6 +1,12 @@
+# Go Redis Exploration
+
+## Demo
+1. Run the Server
+2. Write and Set are using RESP standard, request can be sent via telnet or redis-cli
+
+refer to for RESP documentation:
 redis proto spec
 [redis proto spec doc](https://redis.io/docs/latest/develop/reference/protocol-spec/)
-
 
 ## Benchmark
 ~/src/redis/src/redis-benchmark -h localhost -p 3100 -r 100000000000 -P 1000 -c 50 -t SET,GET
